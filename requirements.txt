@@ -2,3 +2,4 @@ yfinance
 pytrends
 pandas
 numpy
+pyinform
