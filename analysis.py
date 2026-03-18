@@ -58,10 +58,66 @@ for lag in range(1, 7):
     TE_Returns_to_Trends_lag = transfer_entropy(returns_states.to_numpy(), trends_states.to_numpy(), k=lag)
     print(f"Lag {lag} days: TE_Trends_to_Returns = {TE_Trends_to_Returns_lag}, TE_Returns_to_Trends = {TE_Returns_to_Trends_lag}")
 
-# Now we need to be able to interpret the transfer entropy results and determine the relationship of GoogleTrends Bitcoin index is a leading indicator of market activity, or vice-versa
-if TE_Trends_to_Returns > TE_Returns_to_Trends:
-    print("Directional result: Trends -> Returns shows stronger information flow.")
-elif TE_Returns_to_Trends > TE_Trends_to_Returns:
-    print("Directional result: Returns -> Trends shows stronger information flow.")
+
+def permutation_te_pvalue(source, target, observed_te, k=1, n_shuffles=500, seed=None):
+    """Estimate a p-value for an observed transfer entropy via permutation testing.
+
+    The source series is randomly shuffled *n_shuffles* times, and the transfer
+    entropy is recomputed for each shuffle.  The p-value is the fraction of
+    shuffled TE values that are greater than or equal to the observed value.
+    A small p-value (< 0.05) indicates that the observed TE is unlikely under
+    the null hypothesis of no information flow from source to target.
+
+    Pass an integer *seed* for reproducible results; leave as None for a
+    different random draw on each call.
+    """
+    rng = np.random.default_rng(seed=seed)
+    source_array = source.to_numpy().copy()
+    target_array = target.to_numpy()
+    count_geq = 0
+    for _ in range(n_shuffles):
+        shuffled = rng.permutation(source_array)
+        shuffled_te = transfer_entropy(shuffled, target_array, k=k)
+        if shuffled_te >= observed_te:
+            count_geq += 1
+    return count_geq / n_shuffles
+
+
+# Compute p-values via permutation testing for the base (k=1) TE estimates
+print("\nComputing significance via permutation testing (500 shuffles each)…")
+pvalue_trends_to_returns = permutation_te_pvalue(trends_states, returns_states, TE_Trends_to_Returns, k=1)
+pvalue_returns_to_trends = permutation_te_pvalue(returns_states, trends_states, TE_Returns_to_Trends, k=1)
+
+print(f"\nTE Trends -> Returns: {TE_Trends_to_Returns:.6f}  (p-value: {pvalue_trends_to_returns:.4f})")
+print(f"TE Returns -> Trends: {TE_Returns_to_Trends:.6f}  (p-value: {pvalue_returns_to_trends:.4f})")
+
+# Interpret the results using the framework described in the README
+SIGNIFICANCE_THRESHOLD = 0.05
+sig_trends_to_returns = pvalue_trends_to_returns < SIGNIFICANCE_THRESHOLD
+sig_returns_to_trends = pvalue_returns_to_trends < SIGNIFICANCE_THRESHOLD
+
+print()
+if sig_trends_to_returns and not sig_returns_to_trends:
+    # Case A: The "Exploitable Pattern" (Unidirectional: Trends -> Returns)
+    print("Case A: The 'Exploitable Pattern' (Unidirectional: Trends -> Returns)")
+    print("A meaningful, one-way information flow from search interest to price returns exists.")
+    print("This suggests search interest has predictive value for future returns.")
+elif sig_returns_to_trends and not sig_trends_to_returns:
+    # Case B: Market Activity Drives Attention (Unidirectional: Returns -> Trends)
+    print("Case B: Market Activity Drives Attention (Unidirectional: Returns -> Trends)")
+    print("Price changes are driving public attention, but public attention is not providing a predictive signal for price.")
+elif sig_trends_to_returns and sig_returns_to_trends:
+    # Case C: A Two-Way Relationship (Bidirectional)
+    print("Case C: A Two-Way Relationship (Bidirectional)")
+    if TE_Trends_to_Returns > TE_Returns_to_Trends:
+        print("The dominant direction is Trends -> Returns (higher TE score).")
+        print("Directional result: Trends -> Returns shows stronger information flow.")
+    elif TE_Returns_to_Trends > TE_Trends_to_Returns:
+        print("The dominant direction is Returns -> Trends (higher TE score).")
+        print("Directional result: Returns -> Trends shows stronger information flow.")
+    else:
+        print("Both directions show equal information flow.")
 else:
-    print("Directional result: Both directions show equal information flow.")
+    # Case D: No Pattern Found
+    print("Case D: No Pattern Found")
+    print("There is no evidence of a statistically significant predictive relationship in either direction.")
